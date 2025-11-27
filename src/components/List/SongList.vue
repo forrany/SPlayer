@@ -15,7 +15,7 @@
       <Transition name="fade" mode="out-in">
         <VirtList
           ref="listRef"
-          :key="listData?.[0]?.id"
+          :key="listKey"
           :list="listData"
           :minSize="94"
           :buffer="2"
@@ -60,9 +60,21 @@
               :hiddenCover="hiddenCover"
               :hiddenAlbum="hiddenAlbum"
               :hiddenSize="hiddenSize"
-              @dblclick.stop="player.updatePlayList(listData, itemData, playListId)"
+              @dblclick.stop="
+                doubleClickAction === 'add'
+                  ? player.addNextSong(itemData, true)
+                  : player.updatePlayList(listData, itemData, playListId)
+              "
               @contextmenu.stop="
-                songListMenuRef?.openDropdown($event, listData, itemData, index, type, playListId)
+                songListMenuRef?.openDropdown(
+                  $event,
+                  listData,
+                  itemData,
+                  index,
+                  type,
+                  playListId,
+                  isDailyRecommend,
+                )
               "
             />
           </template>
@@ -111,14 +123,14 @@
 
 <script setup lang="ts">
 import type { DropdownOption } from "naive-ui";
-import type { SongType, SortType } from "@/types/main";
+import { SongType, SortType } from "@/types/main";
 import { useMusicStore, useStatusStore } from "@/stores";
 import { VirtList } from "vue-virt-list";
-import { cloneDeep, entries, isEmpty } from "lodash-es";
+import { entries, isEmpty } from "lodash-es";
 import { sortOptions } from "@/utils/meta";
 import { renderIcon } from "@/utils/helper";
+import { usePlayer } from "@/utils/player";
 import SongListMenu from "@/components/Menu/SongListMenu.vue";
-import player from "@/utils/player";
 
 const props = withDefaults(
   defineProps<{
@@ -143,11 +155,16 @@ const props = withDefaults(
     disabledSort?: boolean;
     // 播放歌单 ID
     playListId?: number;
+    // 是否为每日推荐
+    isDailyRecommend?: boolean;
+    // 双击播放操作
+    doubleClickAction?: "all" | "add";
   }>(),
   {
     type: "song",
     loadingText: "努力加载中...",
     playListId: 0,
+    isDailyRecommend: false,
   },
 );
 
@@ -160,6 +177,7 @@ const emit = defineEmits<{
   removeSong: [id: number[]];
 }>();
 
+const player = usePlayer();
 const musicStore = useMusicStore();
 const statusStore = useStatusStore();
 
@@ -179,8 +197,9 @@ const songListMenuRef = ref<InstanceType<typeof SongListMenu> | null>(null);
 
 // 列表数据
 const listData = computed<SongType[]>(() => {
-  const data = cloneDeep(props.data);
-  if (props.disabledSort) return data;
+  if (props.disabledSort) return props.data;
+  // 创建副本用于排序（避免修改原数组）
+  const data = [...props.data];
   // 排序
   switch (statusStore.listSort) {
     case "titleAZ":
@@ -212,6 +231,19 @@ const listData = computed<SongType[]>(() => {
   }
 });
 
+// 虚拟列表 key
+const listKey = computed(() => {
+  // 每日推荐
+  if (props.isDailyRecommend) {
+    return `daily-${musicStore.dailySongsData.timestamp || 0}`;
+  }
+  // 使用 playListId 作为主要 key
+  if (props.playListId) {
+    return `playlist-${props.playListId}`;
+  }
+  return `type-${props.type}`;
+});
+
 // 列表是否具有播放歌曲
 const hasPlaySong = computed(() => {
   return listData.value.findIndex((item) => item.id === musicStore.playSong.id);
@@ -233,7 +265,9 @@ const sortMenuOptions = computed<DropdownOption[]>(() =>
 // 列表滚动
 const onScroll = (e: Event) => {
   emit("scroll", e);
-  scrollTop.value = (e.target as HTMLElement).scrollTop;
+  const top = (e.target as HTMLElement).scrollTop;
+  scrollTop.value = top;
+  offset.value = top;
 };
 
 // 列表触底
@@ -360,7 +394,6 @@ onBeforeUnmount(() => {
     }
     .meta {
       width: 50px;
-      font-size: 13px;
       text-align: center;
       &.size {
         width: 60px;

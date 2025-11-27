@@ -97,6 +97,27 @@
       </n-card>
       <n-card class="set-item">
         <div class="label">
+          <n-text class="name">显示歌曲音质</n-text>
+          <n-text class="tip" :depth="3">是否列表中显示歌曲音质</n-text>
+        </div>
+        <n-switch class="set" v-model:value="settingStore.showSongQuality" :round="false" />
+      </n-card>
+      <n-card class="set-item">
+        <div class="label">
+          <n-text class="name">显示特权标签</n-text>
+          <n-text class="tip" :depth="3">是否显示如 VIP、EP 等特权标签</n-text>
+        </div>
+        <n-switch class="set" v-model:value="settingStore.showSongPrivilegeTag" :round="false" />
+      </n-card>
+      <n-card class="set-item">
+        <div class="label">
+          <n-text class="name">显示原唱翻唱标签</n-text>
+          <n-text class="tip" :depth="3">是否显示歌曲原唱翻唱标签</n-text>
+        </div>
+        <n-switch class="set" v-model:value="settingStore.showSongOriginalTag" :round="false" />
+      </n-card>
+      <n-card class="set-item">
+        <div class="label">
           <n-text class="name">开启页面缓存</n-text>
           <n-text class="tip" :depth="3">是否开启部分页面的缓存，这将会增加内存占用</n-text>
         </div>
@@ -142,13 +163,7 @@
           <n-text class="name">在线服务</n-text>
           <n-text class="tip" :depth="3">是否开启软件的在线服务</n-text>
         </div>
-        <n-switch
-          class="set"
-          :disabled="true"
-          :value="useOnlineService"
-          :round="false"
-          @update:value="modeChange"
-        />
+        <n-switch class="set" :value="useOnlineService" :round="false" @update:value="modeChange" />
       </n-card>
       <n-card class="set-item">
         <div class="label">
@@ -167,7 +182,12 @@
               恢复默认
             </n-button>
           </Transition>
-          <n-select v-model:value="settingStore.globalFont" :options="allFontsData" class="set" />
+          <n-select
+            v-model:value="settingStore.globalFont"
+            :options="allFontsData"
+            class="set"
+            filterable
+          />
         </n-flex>
       </n-card>
       <n-card class="set-item">
@@ -194,6 +214,35 @@
               ...allFontsData.filter((v) => v.value !== 'default'),
             ]"
             class="set"
+            filterable
+          />
+        </n-flex>
+      </n-card>
+      <n-card class="set-item">
+        <div class="label">
+          <n-text class="name">日语歌词字体</n-text>
+          <n-text class="tip" :depth="3"> 是否在歌词为日语时单独设置字体 </n-text>
+        </div>
+        <n-flex>
+          <Transition name="fade" mode="out-in">
+            <n-button
+              v-if="settingStore.japaneseLyricFont !== 'follow'"
+              type="primary"
+              strong
+              secondary
+              @click="settingStore.japaneseLyricFont = 'follow'"
+            >
+              恢复默认
+            </n-button>
+          </Transition>
+          <n-select
+            v-model:value="settingStore.japaneseLyricFont"
+            :options="[
+              { label: '跟随全局', value: 'follow' },
+              ...allFontsData.filter((v) => v.value !== 'default'),
+            ]"
+            class="set"
+            filterable
           />
         </n-flex>
       </n-card>
@@ -256,12 +305,13 @@
 
 <script setup lang="ts">
 import type { SelectOption } from "naive-ui";
-import { useMusicStore, useSettingStore, useStatusStore } from "@/stores";
-import { isElectron } from "@/utils/helper";
+import { useDataStore, useMusicStore, useSettingStore, useStatusStore } from "@/stores";
+import { isDev, isElectron } from "@/utils/env";
+import { getCoverColor } from "@/utils/player-utils/song";
 import { isEmpty } from "lodash-es";
 import themeColor from "@/assets/data/themeColor.json";
-import player from "@/utils/player";
 
+const dataStore = useDataStore();
 const musicStore = useMusicStore();
 const settingStore = useSettingStore();
 const statusStore = useStatusStore();
@@ -319,26 +369,40 @@ const modeChange = (val: boolean) => {
   if (val) {
     window.$dialog.warning({
       title: "开启在线服务",
-      content: "确定开启软件的在线服务？更改将在重启后生效！",
+      content: "确定开启软件的在线服务？更改将在热重载后生效！",
       positiveText: "开启",
       negativeText: "取消",
       onPositiveClick: () => {
         useOnlineService.value = true;
         settingStore.useOnlineService = true;
+        // 清理播放数据
+        dataStore.$reset();
+        musicStore.$reset();
+        // 清空本地数据
+        localStorage.removeItem("data-store");
+        localStorage.removeItem("music-store");
+        // 热重载
+        window.location.reload();
       },
     });
   } else {
     window.$dialog.warning({
       title: "关闭在线服务",
       content:
-        "确定关闭软件的在线服务？将关闭包括搜索、登录、在线音乐播放等在内的全部在线服务，软件将会变为本地播放器！更改将在软件重启后生效！",
+        "确定关闭软件的在线服务？将关闭包括搜索、登录、在线音乐播放等在内的全部在线服务，并且将会退出登录状态，软件将会变为本地播放器！更改将在重启后生效！",
       positiveText: "关闭",
       negativeText: "取消",
       onPositiveClick: () => {
         useOnlineService.value = false;
         settingStore.useOnlineService = false;
+        // 清理播放数据
+        dataStore.$reset();
+        musicStore.$reset();
+        // 清空本地数据
+        localStorage.removeItem("data-store");
+        localStorage.removeItem("music-store");
         // 重启
-        window.electron.ipcRenderer.send("win-reload");
+        if (!isDev) window.electron.ipcRenderer.send("win-reload");
       },
       onNegativeClick: () => {
         useOnlineService.value = true;
@@ -350,7 +414,7 @@ const modeChange = (val: boolean) => {
 
 // 全局着色更改
 const themeGlobalColorChange = (val: boolean) => {
-  if (val) player.getCoverColor(musicStore.songCover);
+  if (val) getCoverColor(musicStore.songCover);
 };
 
 onMounted(() => {
